@@ -1,0 +1,182 @@
+# Changelog
+
+All notable changes to this integration.
+
+## [1.8.4] - 2026-09-04
+
+Web search moves off the shared Home Assistant API list onto the agent that owns it. An agent that had it selected keeps it — the setting moves for you.
+
+### Fixed
+- **The Brave web search tool was offered to every other conversation integration.** It was registered with `llm.async_register_api`, and that registry is what Home Assistant builds *every* agent's **Home Assistant API** picker from — so Anthropic, Gemini, OpenAI and OpenRouter agents could all search the web on this integration's Brave key. It is no longer registered anywhere; each agent has its own **Web search (Brave)** switch instead, shown once the entry carries a Brave key.
+- **A tool schema could still reach the API as something the SDK cannot serialise.** 1.8.3 fixed the cause of `Object of type _Unsupported is not JSON serializable` — if you still see it, updating is the fix. Two ways back to it are closed too: any serializer answer that is not a schema now means “you render it”, whichever library it came from, and the result is checked with the same `json.dumps` the SDK uses, at every depth rather than only at the top. A schema that fails that costs one skipped tool named in the log, never the whole request.
+
+### Added
+- `run_debug` reports whether the entry has a Brave key and whether the agent has web search on.
+- Tests for the moved setting, and — against a real Home Assistant — for the agent-private tool API and for a mismatch between two schema libraries.
+
+## [1.8.3] - 2026-09-03
+
+Nothing to do on upgrade. Required for recent Home Assistant releases, where no tool worked at all.
+
+### Fixed
+- **Every request failed once Home Assistant switched its schema library.** Core replaced `voluptuous-openapi` with `probatio` for rendering tool schemas. Both ask the caller's serializer whether it can handle a node and compare the answer against their *own* `UNSUPPORTED` marker by identity, so the old converter did not reject core's new serializer — it returned that marker as if it were the schema. Every tool reached the API as `"parameters": UNSUPPORTED` and the request died in the SDK with `Object of type _Unsupported is not JSON serializable`, on any model, with nothing in the log naming the cause. Both libraries are supported now: the marker is translated to the one the converter in use expects, and a result that is not a schema is refused rather than sent. Affected Assist tools and AI Task structured output alike.
+- A tool whose schema cannot be rendered is skipped with its name in the log, instead of being sent as something the SDK cannot serialise.
+
+### Added
+- The `run_debug` report records the installed `probatio` version and which converter is in use.
+
+## [1.8.2] - 2026-09-03
+
+Nothing to do on upgrade. Fixes Assist announcing what it is about to check and then falling silent.
+
+### Fixed
+- **A tool call with invalid JSON arguments killed the turn.** The call was dropped with nothing but a log line, so no tool ran and the answer ended after whatever preamble had been spoken. Common malformations are repaired now (unquoted value, single quotes, `True`/`False`/`None`, trailing comma, markdown fence, double-encoded JSON); anything left goes back to the model as a tool result carrying the parse error, so it retries within the turn. A half-readable call is never guessed at and never executed.
+- **One such turn then broke every later question in that conversation**, because the assistant message it left behind had neither text nor tool calls and the API rejects those (`content or tool_calls must be set`). It is no longer sent.
+- **Tool calls were lost on gateways that split them differently**: `id` and the function name had to arrive in the opening chunk, and a call announced out of order was discarded. Chunks are now merged per index whatever they carry.
+
+### Added
+- Unit tests for tool-argument parsing and for assembling a tool call out of streamed chunks.
+
+## [1.8.1] - 2026-08-30
+
+No behaviour change on upgrade.
+
+### Changed
+- Internal modularisation: large modules split into smaller files with one job each.
+
+### Fixed
+- Unit tests no longer break on machines that have Home Assistant installed.
+
+### Added
+- More unit tests for models, options, request building and streaming.
+
+## [1.8.0] - 2026-08-27
+
+Nothing to do on upgrade: your settings become the first conversation agent, an AI Task agent is created alongside it, and both entities keep their entity id. `conversation.deepseek` still answers.
+
+### Added
+- **Several agents on one API key.** Each agent is a subentry with its own name, prompt, model and tools: a fast V4 Flash agent for voice, a V4 Pro agent for automations, an AI Task entity on a third prompt. Add them on the integration card; each gets its own device and its own reconfigure row.
+- **`generate_content` and `run_debug` can name an agent.** One entity id (`agent: conversation.deepseek_pro`) says which credentials to use and which prompt and model to answer with, so an automation can pick the fast agent or the capable one. `config_entry` is now optional and still follows the entry's first agent.
+- Adding an agent is a two-step form. The second step only opens when **Recommended settings** is switched off, and an agent left on the defaults stores only what you chose.
+- A `tests/` suite and a **Unit tests** CI job, run with the standard library.
+
+### Changed
+- **The gear icon is gone.** The entry holds only the credentials, still changed through **⋮ → Reconfigure**. Agent settings live on each agent's own row.
+- The second step is grouped into four collapsible sections (*Reply*, *Tools*, *Conversation* for Assist only, and *Limits and input*), each field described in one line.
+- **Remove formatting** is on by default now. A reply is read out loud far more often than it is read. An agent that had it switched off only because that was the old default follows the new one; one where it was deliberately turned on is left alone.
+- **Context management** is gone. It only forced the two limits below it to zero, which is what zero already meant in either field. The conversation history cap is no longer offered to AI Task agents, where a single-turn chat log made it meaningless.
+- Editing an agent reloads the entry; settings can no longer be applied in place.
+- Token counters and **Reset usage** stay on the entry's own device. Usage is billed per API key and adds up across every agent sharing it.
+
+### Fixed
+- **A reply the stripper could not cut blocked Home Assistant for seconds.** Every cut position was weighed again per delta, so an unclosed `[` cost time quadratic in the reply's own length (8.8 seconds of blocked event loop, now 45 milliseconds).
+- **Emphasis markers survived into the spoken reply.** Every marker was guarded by a word-character check, which is right for `_` but wrong for `*` and `~~`: markdown lets those open inside a word, as Chinese (`今天**很好**啊`) and mixed text (`**粗体**and english`) always do. The star rules now also decline arithmetic (`5**2`, `3*4`) and no longer take half of a `**` run.
+- Three cases where the stream and the finished text could disagree: a backtick exposing a heading marker, deleted text leaving trailing whitespace, and an inline rule creating a list marker (`*-*` leaves `-`).
+
+## [1.7.0] - 2026-08-26
+
+### Fixed
+- **Retired model ids.** DeepSeek stopped serving `deepseek-chat` and `deepseek-reasoner` on 2026-07-24, so an entry left on one failed every request. They are gone from the model picker, an affected entry is switched to `deepseek-v4-flash` on startup, and the change is reported under **Settings → Repairs**. Entries on a custom base URL keep their id, because a gateway may still serve it.
+- **Images on the official API.** `deepseek-v4-flash-vision-exp` accepts image input, but images were refused whenever the base URL was `api.deepseek.com`. Support now depends on the model: on the official API only the vision model is accepted, a custom base URL is never gated. Camera snapshots no longer need a third-party gateway.
+- **Attachment support was advertised on models that reject images.** It now needs the *Allow vision* option *and* a capable model.
+- **No request timeout.** The OpenAI SDK defaults (600 s, two retries) applied to Assist, so one unresponsive endpoint could block a voice pipeline for ten minutes. New **Request timeout** option, default 60 s: while streaming it bounds the gap between two chunks, so long answers are never cut off. `generate_content` is not streamed and waits at least 300 s. Retries drop from two to one, and the Brave web search tool is bounded at 10 s.
+- **Max tokens** could be set up to 1 000 000, which is the context window rather than the output limit. The ceiling is now 384 000, the most V4 generates.
+- **Token counters lost every failed turn.** Usage was recorded only after a whole turn succeeded, so an API error part-way through a tool loop, or hitting the iteration cap, discarded the tokens of the rounds that had already been billed. They are counted now whatever the outcome.
+- **Tool calls vanished on gateways that omit `type`.** The opening chunk of a streamed tool call had to carry `id`, `type` and the function name; several OpenAI-compatible gateways leave `type` out, and the call was dropped with nothing but a log line — the model asked to switch a light and nothing happened. `type` now defaults to `function`.
+- **`response_format: json_object` failed when the prompt never mentioned JSON.** DeepSeek requires the word in the prompt; `generate_content` adds it when it is missing, instead of returning an API error or an empty reply.
+- **Usage sensors could fail a request during startup.** An API call finishing between the sensors being bound and Home Assistant adding them raised out of the state write. Writes now wait until the entity exists.
+- **Markdown stripping came too late to help voice.** The option cleaned up the finished answer, but Home Assistant had already forwarded every chunk to the UI and to text-to-speech, so the asterisks were read out anyway. Formatting is now removed from the stream itself, holding text back only until a construct can no longer reach across the cut — 25 to 37 characters on real replies, well inside a sentence. AI Task output is untouched, so structured JSON cannot be damaged.
+- The setup form keeps what you typed when the API key or the model is rejected.
+
+### Added
+- `deepseek-v4-flash-vision-exp` in the model picker, and an **Images** section in the README.
+- The `run_debug` report records the request timeout.
+
+### Removed
+- Compatibility code for Home Assistant versions below the declared minimum of 2026.1: the `async_update_reload_and_abort` fallback, the `ai_task` import guard, and the `runtime_data` / `model_dump` attribute probes.
+
+## [1.6.0] - 2026-08-10
+
+### Added
+- **The model now knows who is speaking.** Home Assistant only ever resolved `user_name` for a system prompt, and voice satellites run the pipeline without a user account — so in exactly the households this matters for, `{{ user_name }}` rendered the literal string `None`. The prompt now gets the full speaker identity as real Jinja variables: `user_id`, `user_name`, `user_is_admin`, `person_entity_id`, `person_name`, `person_state`, `device_id`, `device_name`, `user_area`, `user_floor`. Unknown values are empty strings, so `{% if user_name %}` works and nothing renders as `None`. Values are injected as `{% set %}` statements ahead of the configured prompt, so Home Assistant still does the single render pass and a user name can never inject Jinja.
+- **"Tell the model who is speaking"** option, **off by default**: appends a short speaker block — name, presence, and the area of the satellite that was spoken to — without needing a custom prompt. It is appended last, after the exposed-entity list, so the large speaker-independent part of the system prompt stays byte-identical between household members and DeepSeek's prefix cache keeps hitting. Left off, nothing about the speaker reaches the API and the system prompt is byte-identical to before this release.
+- Documentation for the system prompt template variables in the README and in the Configure dialog, where none existed before.
+
+### Fixed
+- **`generate_content` sent the configured system prompt unrendered.** It talks to the API without a chat log, so nothing expanded its template and a prompt containing `{{ ... }}` reached the model as literal text. It now renders the same variables as Assist; a template that fails to render falls back to the unrendered prompt instead of failing the service call.
+- A caller's `extra_system_prompt` (e.g. from `conversation.process`) is no longer lost on follow-up turns now that the speaker block shares that slot.
+
+## [1.5.0] - 2026-08-07
+
+### Improved
+- **HTTP/2 to the API when the endpoint supports it.** The OpenAI SDK ends a streamed completion by breaking out of the SSE iterator at `[DONE]` and closing the response without draining it. Over HTTP/1.1 httpx cannot return such a connection to the pool, so **every** API round opened a new TCP+TLS connection — a full handshake on each tool-calling round trip, which is costly on long-haul or proxied routes. The integration now asks Home Assistant for its HTTP/2-capable shared client; ALPN negotiates per endpoint, so an API without HTTP/2 transparently keeps using HTTP/1.1. Requires `h2` (added to the manifest) and a core that supports `alpn_protocols`; otherwise the previous HTTP/1.1 client is used.
+
+### Added
+- **Prompt cache tokens** from the API `usage` object: new cumulative `cache_hit_tokens` sensor, plus `cache_hit_tokens`, `cache_miss_tokens` and `cache_hit_rate` attributes on `last_request_tokens` and in the `generate_content` service response. Reads DeepSeek's `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens` and the OpenAI-style `prompt_tokens_details.cached_tokens` used by some gateways.
+- **Warning when an endpoint ignores `thinking: disabled`.** DeepSeek V4 reasons by default when the field is absent, so a gateway that drops unknown `extra_body` keys leaves reasoning on: the tokens are generated, billed and waited for, while the integration discards the text. This was only visible at DEBUG level; it now logs one warning per config entry pointing at the `reasoning_tokens` sensor.
+- **Latency profiling in `run_debug`.** The report now records the negotiated HTTP version, the installed `h2` version, per-stream time-to-first-chunk, mean inter-chunk gap and a `looks_buffered_by_proxy` flag (a proxy that buffers the reply defeats streaming TTS), token usage per stream test, and a `latency_profile` block that separates connection-setup cost from provider-side inference by timing three back-to-back requests against one after a 16 s idle.
+
+### Fixed
+- Nested `completion_tokens_details` / `prompt_tokens_details` are now read from gateways that return them as plain objects rather than dicts or pydantic models; `reasoning_tokens` was silently reported as 0 for those.
+
+## [1.4.0] - 2026-07-24
+
+### Added
+- **AI Task entity** for `ai_task.generate_data` in automations (plain text or structured JSON via `structure:`). The HA `structure` schema is converted to JSON Schema and injected into the prompt; official DeepSeek uses `json_object`, custom gateways may use `json_schema`.
+- Same **Configure system prompt** and **Home Assistant LLM APIs** as Assist (`llm_api` on the action overrides).
+- **Usage sensors** track AI Task calls (`source=ai_task`).
+- **Vision attachments** on AI Task when Allow vision is on and the base URL supports multimodal chat.
+- Sample automation: `sample_automations/deepseek_ai_task_demo.yaml`.
+### Improved
+- Shared streaming chat loop (`async_handle_chat_log`) for Assist and AI Task.
+
+## [1.3.2] - 2026-07-21
+
+### Added
+- **Optional Brave Search web tool**: set a Brave Search API key on setup or Reconfigure; a `Web Search (Brave)` LLM API is registered and can be enabled under Configure → Home Assistant API alongside Assist. Assist-only (`generate_content` stays without tools).
+
+### Fixed
+- **Config entry reload**: Reconfigure/Reauth use `async_update_and_abort`; the conversation update listener schedules reload when `entry.data` changes. Avoids the Home Assistant warning that this pattern breaks in 2026.12.
+
+## [1.3.1] - 2026-07-02
+
+### Fixed
+- **HACS installation**: release zip no longer creates a nested `deepseek_conversation/deepseek_conversation/` folder; files extract correctly into `custom_components/deepseek_conversation/`.
+- **Recovery from 1.3.0**: if the integration failed to load after installing 1.3.0, update to 1.3.1 via HACS and restart Home Assistant. That restores the correct file layout. Optionally delete `custom_components/deepseek_conversation/` first and reinstall 1.3.1 for a clean folder (an leftover nested subfolder is harmless but may remain after update).
+
+## [1.3.0] - 2026-07-01
+
+### Added
+
+- **Token usage monitoring** on the integration device (per config entry), updated after Assist and `generate_content` calls (`run_debug` does not count):
+  - Cumulative sensors (persist across restarts): `prompt_tokens`, `completion_tokens`, `total_tokens`, `reasoning_tokens`, `api_requests`
+  - Last-request sensors: `last_request_tokens` (with prompt, completion, reasoning, source, and request count as attributes), `last_request_prompt_tokens`, `last_request_completion_tokens`
+  - **Reset usage** button to zero all counters manually (replaces the earlier auto-reset on Reconfigure)
+  - `generate_content` service responses include a `usage` token breakdown when the API reports it
+- **Context management**: optional shortening of large Home Assistant tool result JSON before API calls (default 12 000 chars per tool result; set **Max tool result size** to `0` to disable) and optional **Max conversation rounds** for Assist history (default `0` = unlimited). Older complete user turns are dropped before each API call; the system prompt and the current round including tool chains stay intact.
+- **Reauthentication** when your API key expires or is rejected: fix credentials in Home Assistant settings without removing and re-adding the integration.
+- **Reconfigure** (integration card ⋮ -> Reconfigure, or shortcut in the options menu) to change your API key or base URL while keeping Assist and model options unchanged.
+- **`generate_content` per-call overrides**: optional `chat_model`, `temperature`, `thinking_enabled`, `max_tokens`, and `response_format: json_object`. Unset fields use the config entry options.
+- **`generate_content` reasoning in response**: when reasoning is enabled for the call, the service response includes a `reasoning` field with the model's thinking text alongside `text` and `usage`.
+- **Vision** (Assist attachments and `generate_content` filenames via `vision.py`): OpenAI-style `image_url` parts; **Allow vision** option (default on) gates input and advertises `SUPPORT_ATTACHMENTS` when Home Assistant supports it; legacy `deepseek-reasoner` is rejected when images are attached; resolved image MIME types; fails with a clear error when no file could be read or when the base URL is the official `api.deepseek.com` endpoint (text-only). Actual image analysis requires a custom OpenAI-compatible base URL with multimodal chat.
+- **Configurable max tool iterations** (1–20, default 10) in integration options for the Assist tool loop.
+- **DeepSeek brand icons** in the integrations list and config flow (Home Assistant 2026.3+).
+- **More translations** for the `generate_content` service, invalid config entry errors, reasoning effort labels, reconfigure, options field hints, sensor names, and the debug notification (EN, DE, FR, ZH).
+
+### Improved
+
+- **Simplified streaming tool loop** aligned with the stock Ollama/OpenAI conversation integrations: one API round per `async_add_delta_content_stream`, assistant role on each round's first delta, tool execution when the stream ends.
+- **More reliable device control**: Home Assistant tools with invalid schemas are skipped instead of being sent with empty parameters, which previously caused opaque API errors.
+- **Faster option changes**: updates to prompt, model, temperature, thinking, and similar options apply immediately in Assist without reloading the whole integration. Reload only runs for connection settings (base URL, API key).
+- **Clearer configuration UX**: the gear icon opens Assist and model options directly; API key and base URL are changed only via Reconfigure (not mixed into options). API keys use a password field in setup, reauth, and reconfigure.
+- **Options form**: all fields stay visible (reasoning, reasoning effort, temperature, top_p); one OK saves everything with no form reload when toggling reasoning.
+- **Quicker setup and reauth**: credentials are verified via `models.list` instead of a chat completion, so setup does not consume tokens.
+
+### Fixed
+
+- **Reasoning off on DeepSeek V4**: the API defaults to thinking enabled when `extra_body` is omitted; the integration now sends `thinking: disabled` explicitly and no longer shows the “Details” reasoning block in Assist when reasoning is turned off.
+- **Reasoning on**: `reasoning_effort` (e.g. low, high, xhigh) is sent correctly with `thinking: enabled`; temperature and top_p are omitted as required by the API.
+- **`generate_content` with reasoning enabled**: temperature and top_p are no longer sent (consistent with Assist).
+- **Reasoning off on other endpoints**: DeepSeek-specific `extra_body` is only sent for DeepSeek model IDs, so custom OpenAI-compatible gateways are not sent thinking fields unless the model id indicates DeepSeek.
+- **Assist chat shows the final answer after tool calls.** With multi-step tool use (for example several `GetLiveContext` lookups followed by an action such as turning a light off), the Assist chat could show the preamble text and the tool calls but drop the final answer, even though the model replied correctly and the action was carried out. Fixed in the Home Assistant frontend that ships with **2026.7** ([frontend #52753](https://github.com/home-assistant/frontend/pull/52753)). On 2026.6, wait until streaming finishes before opening the thinking details.
+- **Home Assistant 2026.7**: allow `voluptuous-openapi` 0.4.x (Core ships 0.4.0; the previous `<0.4` pin blocked setup).

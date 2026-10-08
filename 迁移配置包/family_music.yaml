@@ -1,0 +1,862 @@
+# 家庭音乐统一入口配置包；只在household_music_player_config.players登记播放器。
+# 先通过Local To-do集成创建todo.family_music_sleep，不在此重复声明。
+input_select:
+  music_last_room:
+    name: 家庭音乐默认播放器
+    options:
+      - 卧室
+      - 一楼
+    # 首次引导，选项由players自动同步，不设置initial。
+script:
+  household_music_player_config:
+    alias: 家庭音乐播放器配置
+    description: 唯一播放器维护入口，只修改players中的名称与播放器实体；房间列表、收藏和睡眠调度自动适配。
+    mode: queued
+    max: 20
+    fields:
+      room:
+        name: 播放器名称
+        description: 自动或留空使用最近播放器；明确名称须与players的键一致。
+        default: 自动
+        selector:
+          text: null
+    sequence:
+      - variables:
+          players:
+            卧室: media_player.wo_shi_l
+            一楼: media_player.wo_shi_r
+      - variables:
+          available_rooms: '{{ players.keys() | list }}'
+          cached_room: "{{ states('input_select.music_last_room') }}"
+      - variables:
+          target_room: >-
+            {% set r = room | default('自动', true) %}
+            {{ (cached_room if cached_room in players else available_rooms[0]) if r == '自动' else r }}
+      - if:
+          - condition: template
+            value_template: '{{ target_room not in players }}'
+        then:
+          - variables:
+              result:
+                success: false
+                players: '{{ players }}'
+                available_rooms: '{{ available_rooms }}'
+                message: 未配置该播放器名称，请按可用列表选择
+          - stop: 未找到播放器
+            response_variable: result
+      - if:
+          - condition: template
+            value_template: "{{ state_attr('input_select.music_last_room', 'options') != available_rooms }}"
+        then:
+          - action: input_select.set_options
+            target:
+              entity_id: input_select.music_last_room
+            data:
+              options: '{{ available_rooms }}'
+          - action: input_select.select_option
+            target:
+              entity_id: input_select.music_last_room
+            data:
+              option: '{{ cached_room if cached_room in players else available_rooms[0] }}'
+      - variables:
+          target_player: '{{ players[target_room] }}'
+      - variables:
+          favorite_candidates: >-
+            {{ device_entities(device_id(target_player)) | select('match', '^button\.') | select('search', 'favorite_current_song$') | list if device_id(target_player) else [] }}
+      - variables:
+          result:
+            success: true
+            target_room: '{{ target_room }}'
+            target_player: '{{ target_player }}'
+            favorite_button: "{{ favorite_candidates[0] if favorite_candidates | count == 1 else '' }}"
+            players: '{{ players }}'
+            available_rooms: '{{ available_rooms }}'
+      - stop: 已解析播放器
+        response_variable: result
+  household_music_sleep_scheduler:
+    alias: 家庭音乐睡眠调度
+    description: 公共睡眠调度，所有播放器共享持久计划列表，按播放器实体独立记录截止时间。
+    mode: queued
+    max: 20
+    fields:
+      operation:
+        name: 内部操作
+        required: true
+        selector:
+          select:
+            options:
+              - set
+              - cancel
+              - status
+              - tick
+      player_entity:
+        name: 播放器实体
+        selector:
+          text: null
+      minutes:
+        name: 分钟数
+        selector:
+          number:
+            min: 1
+            max: 480
+            mode: box
+    sequence:
+      - action: script.household_music_player_config
+        data:
+          room: 自动
+        response_variable: registry
+      - variables:
+          target: "{{ player_entity | default('', true) }}"
+          allowed_players: '{{ registry.players.values() | list }}'
+      - if:
+          - condition: template
+            value_template: "{{ operation not in ['set','cancel','status','tick'] or (operation != 'tick' and target not in allowed_players) or (operation == 'set' and (minutes is not defined or minutes | float(0) < 1 or minutes | float(0) > 480)) }}"
+        then:
+          - variables:
+              result:
+                success: false
+                message: 睡眠操作、播放器或分钟数无效
+          - stop: 调度参数无效
+            response_variable: result
+      - action: todo.get_items
+        target:
+          entity_id: todo.family_music_sleep
+        data:
+          status: needs_action
+        response_variable: schedule_data
+      - variables:
+          pending: "{{ schedule_data['todo.family_music_sleep']['items'] | default([]) }}"
+      - variables:
+          matches: "{{ pending | selectattr('summary','eq',target) | list }}"
+      - choose:
+          - conditions: "{{ operation == 'set' }}"
+            sequence:
+              - variables:
+                  deadline: '{{ (now() + timedelta(minutes=minutes | float)).isoformat() }}'
+              - if:
+                  - condition: template
+                    value_template: '{{ matches | count > 0 }}'
+                then:
+                  - action: todo.update_item
+                    target:
+                      entity_id: todo.family_music_sleep
+                    data:
+                      item: '{{ matches[0].uid }}'
+                      due_datetime: '{{ deadline }}'
+                      description: 家庭音乐睡眠计划，由公共调度管理
+                  - repeat:
+                      for_each: '{{ matches[1:] }}'
+                      sequence:
+                        - action: todo.update_item
+                          target:
+                            entity_id: todo.family_music_sleep
+                          data:
+                            item: '{{ repeat.item.uid }}'
+                            status: completed
+                else:
+                  - action: todo.add_item
+                    target:
+                      entity_id: todo.family_music_sleep
+                    data:
+                      item: '{{ target }}'
+                      due_datetime: '{{ deadline }}'
+                      description: 家庭音乐睡眠计划，由公共调度管理
+              - variables:
+                  result:
+                    success: true
+                    timer_state: active
+                    timer_finishes_at: '{{ deadline }}'
+                    remaining_seconds: '{{ (minutes | float * 60) | int }}'
+                    message: 已保存该播放器的睡眠截止时间
+              - stop: 已设置公共睡眠计划
+                response_variable: result
+          - conditions: "{{ operation == 'cancel' }}"
+            sequence:
+              - repeat:
+                  for_each: '{{ matches }}'
+                  sequence:
+                    - action: todo.update_item
+                      target:
+                        entity_id: todo.family_music_sleep
+                      data:
+                        item: '{{ repeat.item.uid }}'
+                        status: completed
+              - variables:
+                  result:
+                    success: true
+                    timer_state: idle
+                    remaining_seconds: 0
+                    message: 已取消该播放器睡眠计划，不改变播放
+              - stop: 已取消公共睡眠计划
+                response_variable: result
+          - conditions: "{{ operation == 'status' }}"
+            sequence:
+              - variables:
+                  result:
+                    success: true
+                    timer_state: "{{ 'active' if matches | count > 0 else 'idle' }}"
+                    timer_finishes_at: "{{ matches[0].due | default('', true) if matches | count > 0 else '' }}"
+                    remaining_seconds: "{{ [0, (as_timestamp(matches[0].due, 0) - as_timestamp(now())) | int] | max if matches | count > 0 else 0 }}"
+              - stop: 已查询公共睡眠计划
+                response_variable: result
+          - conditions: "{{ operation == 'tick' }}"
+            sequence:
+              - repeat:
+                  for_each: '{{ pending }}'
+                  sequence:
+                    - if:
+                        - condition: template
+                          value_template: "{{ repeat.item.summary not in allowed_players }}"
+                      then:
+                        - action: todo.update_item
+                          target:
+                            entity_id: todo.family_music_sleep
+                          data:
+                            item: '{{ repeat.item.uid }}'
+                            status: completed
+                      else:
+                        - if:
+                            - condition: template
+                              value_template: "{{ as_timestamp(repeat.item.due | default('', true), 0) > 0 and as_timestamp(repeat.item.due, 0) <= as_timestamp(now()) and states(repeat.item.summary) not in ['unknown','unavailable'] }}"
+                          then:
+                            - action: media_player.media_pause
+                              continue_on_error: true
+                              target:
+                                entity_id: '{{ repeat.item.summary }}'
+                            - wait_template: "{{ states(repeat.item.summary) in ['paused','idle','off'] }}"
+                              timeout: '00:00:02'
+                              continue_on_timeout: true
+                            - if:
+                                - condition: template
+                                  value_template: "{{ states(repeat.item.summary) in ['paused','idle','off'] }}"
+                              then:
+                                - action: todo.update_item
+                                  target:
+                                    entity_id: todo.family_music_sleep
+                                  data:
+                                    item: '{{ repeat.item.uid }}'
+                                    status: completed
+              - variables:
+                  result:
+                    success: true
+                    message: 公共睡眠计划已巡检
+              - stop: 调度完成
+                response_variable: result
+  bedroom_search_and_play:
+    alias: 家庭音乐搜索播放
+    description: >-
+      在 Music Assistant
+      搜索歌手、歌曲或歌单。query必填；search_only为true只返回候选、不播放，为false在所选房间播放并替换队列。可同时传volume_percent和sleep_minutes组合设置；搜索模式不改变播放、音量和定时。
+    mode: queued
+    max: 5
+    fields:
+      query:
+        name: 音乐搜索词
+        description: 仅填写歌手、歌曲、歌单或风格关键词。
+        required: true
+        selector:
+          text: null
+      search_only:
+        name: 只搜索不播放
+        description: 查找或列出候选时为true；要求听歌或播放时为false。
+        default: false
+        selector:
+          boolean: null
+      volume_percent:
+        name: 播放音量百分比
+        description: 可选，0到100；省略保持当前音量。
+        selector:
+          number:
+            min: 0
+            max: 100
+            mode: box
+      sleep_minutes:
+        name: 多少分钟后暂停
+        description: 可选，1到480；省略不改变现有定时。
+        selector:
+          number:
+            min: 1
+            max: 480
+            mode: box
+      room:
+        name: 播放房间
+        description: 自动使用最近房间；明确名称必须在家庭音乐播放器配置中注册。
+        default: 自动
+        selector:
+          text: null
+      randomize:
+        name: 随机选择和播放
+        description: 泛听歌手或风格时为true；明确点名歌曲或歌单时为false。
+        default: true
+        selector:
+          boolean: null
+      artist:
+        name: 指定歌手
+        description: 指定歌手时必传准确姓名；按歌曲演唱者匹配，禁止用同名歌单代替。风格或歌单搜索留空。
+        selector:
+          text: null
+      allow_versions:
+        name: 允许特殊版本
+        description: 用户明确要求翻唱、现场、混音、伴奏等版本时为true，默认优先普通录音。
+        default: false
+        selector:
+          boolean: null
+    sequence:
+      - action: script.household_music_player_config
+        data:
+          room: '{{ room | default(''自动'', true) }}'
+        response_variable: player_config
+      - if:
+          - condition: template
+            value_template: '{{ not player_config.success }}'
+        then:
+          - variables:
+              result: '{{ player_config }}'
+          - stop: 播放器配置无效
+            response_variable: result
+      - variables:
+          target_room: '{{ player_config.target_room }}'
+          target_player: '{{ player_config.target_player }}'
+          favorite_button: '{{ player_config.favorite_button }}'
+      - variables:
+          search_term: '{{ query | default('''') | trim }}'
+          requested_artist: '{{ artist | default('''', true) | trim }}'
+      - if:
+          - condition: template
+            value_template: '{{ search_term | length == 0 }}'
+        then:
+          - variables:
+              result:
+                success: false
+                message: 缺少音乐搜索词
+          - stop: 缺少搜索词
+            response_variable: result
+      - variables:
+          allow_altered: >-
+            {{ allow_versions | default(false) | bool or search_term | lower |
+            regex_search('魔改|魔性|加速|变速|降速|升调|降调|变调|鬼畜|喊麦|车载|串烧|重低音|慢摇|混音|remix|bootleg|mashup|sped.?up|slowed|nightcore|(^|[^a-z])d[jd]([^a-z]|$)')
+            }}
+          fixed_baby_noise: >-
+            {{ search_term | regex_replace('\s+', '') in ['宝宝白噪音', '宝宝催眠曲', '宝宝睡眠曲',
+            '白噪音宝宝', '白噪音1(嘘声+羊水声)', '白噪音1（嘘声+羊水声）'] }}
+      - if:
+          - condition: template
+            value_template: '{{ fixed_baby_noise | bool }}'
+        then:
+          - variables:
+              play_uris:
+                - REPLACE_WITH_BABY_TRACK_URI
+              selected_name: 白噪音1(嘘声+羊水声)
+              candidate_summary: 本地音频：白噪音1(嘘声+羊水声)；宝宝白噪音；REPLACE_WITH_BABY_TRACK_URI
+        else:
+          - action: music_assistant.search
+            data:
+              config_entry_id: REPLACE_WITH_MA_CONFIG_ENTRY_ID
+              name: '{{ search_term }}'
+              media_type:
+                - playlist
+                - track
+              limit: 20
+              library_only: false
+            response_variable: music_results
+          - variables:
+              playlist_indices: >-
+                {% set ns = namespace(items=[]) %} {% for item in
+                music_results.playlists | default([]) %}
+                  {% if allow_altered | bool or not (item.name | lower | regex_search('魔改|魔性|加速|变速|降速|升调|降调|变调|鬼畜|喊麦|车载|串烧|重低音|慢摇|混音|remix|bootleg|mashup|sped.?up|slowed|nightcore|(^|[^a-z])d[jd]([^a-z]|$)')) %}{% set ns.items = ns.items + [loop.index0] %}{% endif %}
+                {% endfor %} {{ ns.items }}
+              track_indices: >-
+                {% set ns = namespace(items=[]) %} {% for item in
+                music_results.tracks | default([]) %}
+                  {% set label = ((item.name | default('')) ~ ' ' ~ (item.version | default('', true))) | lower %}
+                  {% if allow_altered | bool or not (label | regex_search('魔改|魔性|加速|变速|降速|升调|降调|变调|鬼畜|喊麦|车载|串烧|重低音|慢摇|混音|remix|bootleg|mashup|sped.?up|slowed|nightcore|(^|[^a-z])d[jd]([^a-z]|$)')) %}{% set ns.items = ns.items + [loop.index0] %}{% endif %}
+                {% endfor %} {{ ns.items }}
+              artist_tracks: >-
+                {% set ns = namespace(uris=[]) %} {% for t in music_results.tracks |
+                default([]) %}
+                  {% set names = t.artists | default([]) | map(attribute='name') | map('lower') | list %}
+                  {% set label = ((t.name | default('')) ~ ' ' ~ (t.version | default('', true))) | lower %}
+                  {% set special = label | regex_search('翻唱|伴奏|纯音乐|卡拉|混音|现场|演唱会|cover|karaoke|instrumental|remix|live') %}
+                  {% if requested_artist | lower in names and (allow_versions | default(false) | bool or not special) and (allow_altered | bool or not (label | regex_search('魔改|魔性|加速|变速|降速|升调|降调|变调|鬼畜|喊麦|车载|串烧|重低音|慢摇|混音|remix|bootleg|mashup|sped.?up|slowed|nightcore|(^|[^a-z])d[jd]([^a-z]|$)'))) and t.uri not in ns.uris %}
+                    {% set ns.uris = ns.uris + [t.uri] %}
+                  {% endif %}
+                {% endfor %} {{ ns.uris }}
+          - variables:
+              playlist_count: '{{ playlist_indices | count }}'
+              track_count: '{{ track_indices | count }}'
+          - variables:
+              use_playlist: >-
+                {{ requested_artist | length == 0 and playlist_count | int > 0 and
+                (randomize | default(true) | bool or track_count | int == 0 or
+                music_results.playlists[playlist_indices[0] | int].name ==
+                search_term) }}
+          - variables:
+              selected_index: >-
+                {% set pool = playlist_indices if use_playlist | bool else
+                track_indices %} {{ (pool | random if randomize | default(true) |
+                bool else pool[0]) if pool | count > 0 else 0 }}
+          - variables:
+              play_uris: |-
+                {% if requested_artist | length > 0 %}
+                  {% set ns = namespace(pool=artist_tracks | list, output=[]) %}
+                  {% for i in range(artist_tracks | count) %}
+                    {% set chosen = ns.pool | random if randomize | default(true) | bool else ns.pool[0] %}
+                    {% set ns.output = ns.output + [chosen] %}
+                    {% set ns.pool = ns.pool | reject('eq', chosen) | list %}
+                  {% endfor %}
+                  {{ ns.output if randomize | default(true) | bool else ns.output[:1] }}
+                {% elif use_playlist | bool %}
+                  {{ [music_results.playlists[selected_index | int].uri] }}
+                {% elif track_count | int > 0 %}
+                  {{ [music_results.tracks[selected_index | int].uri] }}
+                {% else %}{{ [] }}{% endif %}
+              selected_name: >-
+                {% if requested_artist | length > 0 %}{{ requested_artist }}本人歌曲（{{
+                artist_tracks | count if randomize | default(true) | bool else
+                ([artist_tracks | count, 1] | min) }}首） {% elif use_playlist | bool
+                %}{{ music_results.playlists[selected_index | int].name }} {% elif
+                track_count | int > 0 %}{{ music_results.tracks[selected_index |
+                int].name }}{% else %}{{ '' }}{% endif %}
+              candidate_summary: >-
+                {% if requested_artist | length == 0 %}{% for item in
+                music_results.playlists | default([]) %}{% if loop.index0 in
+                playlist_indices %}歌单：{{ item.name }}；{% endif %}{% endfor %}{%
+                endif %} {% for item in music_results.tracks | default([]) %}{% if
+                (requested_artist | length == 0 and loop.index0 in track_indices) or
+                item.uri in artist_tracks %}歌曲：{{ item.name }}（{{ item.artists |
+                default([]) | map(attribute='name') | join('、') }}）；{% endif %}{%
+                endfor %}
+      - if:
+          - condition: template
+            value_template: '{{ play_uris | count == 0 }}'
+        then:
+          - variables:
+              result:
+                success: false
+                message: 没有找到符合 {{ search_term }} 的歌曲；指定歌手时只接受演唱者匹配且符合版本要求的结果，不用翻唱或歌单替代
+          - stop: 无搜索结果
+            response_variable: result
+      - if:
+          - condition: template
+            value_template: '{{ search_only | default(false) | bool }}'
+        then:
+          - variables:
+              result:
+                success: true
+                played: false
+                query: '{{ search_term }}'
+                candidates: '{{ candidate_summary | trim }}'
+                message: 只返回搜索结果，没有播放
+          - stop: 搜索完成
+            response_variable: result
+      - if:
+          - condition: template
+            value_template: '{{ fixed_baby_noise | bool or volume_percent is defined }}'
+        then:
+          - action: media_player.volume_set
+            target:
+              entity_id: '{{ target_player }}'
+            data:
+              volume_level: >-
+                {{ ([0, ([volume_percent | default(12 if fixed_baby_noise | bool
+                else 20) | float(12), 100] | min)] | max) / 100 }}
+      - action: media_player.volume_mute
+        target:
+          entity_id: '{{ target_player }}'
+        data:
+          is_volume_muted: false
+      - action: media_player.shuffle_set
+        target:
+          entity_id: '{{ target_player }}'
+        data:
+          shuffle: >-
+            {{ not fixed_baby_noise | bool and requested_artist | length == 0 and
+            randomize | default(true) | bool }}
+      - action: music_assistant.play_media
+        target:
+          entity_id: '{{ target_player }}'
+        data:
+          media_id: '{{ play_uris }}'
+          enqueue: replace
+      - action: media_player.repeat_set
+        target:
+          entity_id: '{{ target_player }}'
+        data:
+          repeat: '{{ ''one'' if fixed_baby_noise | bool else ''off'' }}'
+      - variables:
+          playback_confirmed: false
+          recovery_attempts: 0
+      - repeat:
+          while:
+            - condition: template
+              value_template: '{{ repeat.index <= 3 and not playback_confirmed | bool }}'
+          sequence:
+            - variables:
+                recovery_attempts: '{{ repeat.index }}'
+            - if:
+                - condition: template
+                  value_template: "{{ states(target_player) in ['paused', 'idle', 'off'] }}"
+              then:
+                - action: media_player.media_play
+                  continue_on_error: true
+                  target:
+                    entity_id: '{{ target_player }}'
+            - wait_template: "{{ is_state(target_player, 'playing') }}"
+              timeout:
+                seconds: '{{ 20 if repeat.index == 1 else 15 }}'
+              continue_on_timeout: true
+            - if:
+                - condition: template
+                  value_template: "{{ is_state(target_player, 'playing') }}"
+              then:
+                - wait_template: "{{ not is_state(target_player, 'playing') }}"
+                  timeout: '00:00:03'
+                  continue_on_timeout: true
+                - variables:
+                    playback_confirmed: "{{ not wait.completed and is_state(target_player, 'playing') }}"
+      - if:
+          - condition: template
+            value_template: '{{ not playback_confirmed | bool }}'
+        then:
+          - variables:
+              result:
+                success: false
+                played: false
+                loading: "{{ is_state(target_player, 'buffering') }}"
+                room: '{{ target_room }}'
+                media_name: '{{ selected_name | trim }}'
+                player_state: '{{ states(target_player) }}'
+                recovery_attempts: '{{ recovery_attempts }}'
+                message: >-
+                  {% if is_state(target_player, 'buffering') %}音乐队列已更新，音源仍在缓冲，尚未确认稳定播放；没有重复搜索或替换队列。
+                  {% else %}已等待音源并尝试恢复播放，仍未确认连续3秒播放；队列保留，可查看音源或播放器状态。{% endif %}
+          - stop: 未确认稳定播放
+            response_variable: result
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.music_last_room
+        data:
+          option: '{{ target_room }}'
+      - if:
+          - condition: template
+            value_template: '{{ sleep_minutes is defined }}'
+        then:
+          - action: script.household_music_sleep_scheduler
+            data:
+              operation: set
+              player_entity: '{{ target_player }}'
+              minutes: '{{ [1, ([sleep_minutes | int(30), 480] | min)] | max }}'
+            response_variable: sleep_result
+          - if:
+              - condition: template
+                value_template: '{{ not sleep_result.success }}'
+            then:
+              - variables:
+                  result:
+                    success: false
+                    played: true
+                    room: '{{ target_room }}'
+                    message: 音乐已播放，但睡眠计划设置失败
+              - stop: 睡眠设置失败
+                response_variable: result
+      - variables:
+          result:
+            success: true
+            played: true
+            stable_seconds: 3
+            recovery_attempts: '{{ recovery_attempts }}'
+            room: '{{ target_room }}'
+            message: '{{ target_room }}已连续播放3秒：{{ selected_name | trim }}'
+            media_name: '{{ selected_name | trim }}'
+      - stop: 播放请求已发送
+        response_variable: result
+  bedroom_music_tools:
+    alias: 家庭音乐辅助控制
+    description: >-
+      家庭音乐辅助控制，由集中播放器配置解析room。operation为sleep设置睡眠定时、cancel_sleep取消定时、status查询播放器与剩余定时、favorite收藏当前歌曲到Music
+      Assistant。minutes单位分钟，仅sleep需要，1到480。
+    mode: queued
+    max: 5
+    fields:
+      operation:
+        name: 操作
+        required: true
+        selector:
+          select:
+            options:
+              - sleep
+              - cancel_sleep
+              - status
+              - favorite
+              - pause
+              - play
+              - next
+              - previous
+              - volume
+              - mute
+              - unmute
+              - select_room
+      minutes:
+        name: 定时分钟数
+        description: sleep操作必填，1到480分钟。
+        selector:
+          number:
+            min: 1
+            max: 480
+            mode: box
+      room:
+        name: 播放房间
+        description: 自动使用最近房间；明确名称必须在家庭音乐播放器配置中注册。
+        default: 自动
+        selector:
+          text: null
+      volume_percent:
+        name: 音量百分比
+        description: volume操作必填，0到100。
+        selector:
+          number:
+            min: 0
+            max: 100
+            mode: box
+    sequence:
+      - action: script.household_music_player_config
+        data:
+          room: "{{ room | default('自动', true) }}"
+        response_variable: player_config
+      - if:
+          - condition: template
+            value_template: '{{ not player_config.success }}'
+        then:
+          - variables:
+              result: '{{ player_config }}'
+          - stop: 播放器配置无效
+            response_variable: result
+      - variables:
+          target_room: '{{ player_config.target_room }}'
+          target_player: '{{ player_config.target_player }}'
+          favorite_button: '{{ player_config.favorite_button }}'
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: '{{ operation == ''sleep'' }}'
+            sequence:
+              - if:
+                  - condition: template
+                    value_template: >-
+                      {{ minutes is not defined or minutes | float(0) < 1 or minutes
+                      | float(0) > 480 }}
+                then:
+                  - variables:
+                      result:
+                        success: false
+                        message: 请指定1到480分钟的睡眠定时
+                  - stop: 时间无效
+                    response_variable: result
+              - action: script.household_music_sleep_scheduler
+                data:
+                  operation: set
+                  player_entity: '{{ target_player }}'
+                  minutes: '{{ minutes | float }}'
+                response_variable: sleep_result
+              - if:
+                  - condition: template
+                    value_template: '{{ not sleep_result.success }}'
+                then:
+                  - variables:
+                      result: '{{ sleep_result }}'
+                  - stop: 睡眠设置失败
+                    response_variable: result
+              - variables:
+                  result:
+                    success: true
+                    room: '{{ target_room }}'
+                    minutes: '{{ minutes | float }}'
+                    message: 已设置{{ target_room }}在{{ minutes }}分钟后暂停；重新设置会覆盖旧倒计时
+              - action: input_select.select_option
+                target:
+                  entity_id: input_select.music_last_room
+                data:
+                  option: '{{ target_room }}'
+              - stop: 定时已设置
+                response_variable: result
+          - conditions:
+              - condition: template
+                value_template: '{{ operation == ''cancel_sleep'' }}'
+            sequence:
+              - action: script.household_music_sleep_scheduler
+                data:
+                  operation: cancel
+                  player_entity: '{{ target_player }}'
+                response_variable: sleep_result
+              - variables:
+                  result:
+                    success: true
+                    room: '{{ target_room }}'
+                    message: 已取消指定房间睡眠定时，播放保持不变
+              - action: input_select.select_option
+                target:
+                  entity_id: input_select.music_last_room
+                data:
+                  option: '{{ target_room }}'
+              - stop: 定时已取消
+                response_variable: result
+          - conditions:
+              - condition: template
+                value_template: '{{ operation == ''favorite'' }}'
+            sequence:
+              - variables:
+                  current_title: >-
+                    {{ state_attr(target_player, 'media_title') | default('', true)
+                    }}
+              - if:
+                  - condition: template
+                    value_template: >-
+                      {{ current_title | trim | length == 0 or states(target_player)
+                      in ['unavailable', 'unknown', 'off', 'idle'] }}
+                then:
+                  - variables:
+                      result:
+                        success: false
+                        message: 所选房间当前没有可收藏的歌曲
+                  - stop: 无当前歌曲
+                    response_variable: result
+              - if:
+                  - condition: template
+                    value_template: "{{ favorite_button | length == 0 or states(favorite_button) == 'unavailable' }}"
+                then:
+                  - variables:
+                      result:
+                        success: false
+                        room: '{{ target_room }}'
+                        message: 此播放器未发现可用的MA收藏按钮，不支持收藏
+                  - stop: 收藏不支持
+                    response_variable: result
+              - action: button.press
+                target:
+                  entity_id: '{{ favorite_button }}'
+              - variables:
+                  result:
+                    success: true
+                    room: '{{ target_room }}'
+                    media_name: '{{ current_title }}'
+                    message: 已发送将《{{ current_title }}》加入Music Assistant收藏的请求
+              - action: input_select.select_option
+                target:
+                  entity_id: input_select.music_last_room
+                data:
+                  option: '{{ target_room }}'
+              - stop: 收藏请求已发送
+                response_variable: result
+          - conditions:
+              - condition: template
+                value_template: '{{ operation == ''status'' }}'
+            sequence:
+              - action: script.household_music_sleep_scheduler
+                data:
+                  operation: status
+                  player_entity: '{{ target_player }}'
+                response_variable: sleep_status
+              - variables:
+                  result:
+                    success: true
+                    room: '{{ target_room }}'
+                    player_entity: '{{ target_player }}'
+                    cached_room: "{{ states('input_select.music_last_room') }}"
+                    player_state: '{{ states(target_player) }}'
+                    media_name: >-
+                      {{ state_attr(target_player, 'media_title') | default('',
+                      true) }}
+                    artist: >-
+                      {{ state_attr(target_player, 'media_artist') | default('',
+                      true) }}
+                    volume_percent: >-
+                      {{ (state_attr(target_player, 'volume_level') | float(0) *
+                      100) | round }}
+                    muted: >-
+                      {{ state_attr(target_player, 'is_volume_muted') |
+                      default(false, true) }}
+                    timer_state: '{{ sleep_status.timer_state }}'
+                    timer_finishes_at: '{{ sleep_status.timer_finishes_at }}'
+                    remaining_seconds: '{{ sleep_status.remaining_seconds }}'
+              - stop: 状态查询完成
+                response_variable: result
+          - conditions:
+              - condition: template
+                value_template: "{{ operation in ['pause', 'play', 'next', 'previous', 'volume', 'mute', 'unmute', 'select_room'] }}"
+            sequence:
+              - if:
+                  - condition: template
+                    value_template: "{{ operation == 'volume' and (volume_percent is not defined or volume_percent | float(-1) < 0 or volume_percent | float(101) > 100) }}"
+                then:
+                  - variables:
+                      result:
+                        success: false
+                        message: 请指定0到100的音量百分比
+                  - stop: 音量无效
+                    response_variable: result
+              - choose:
+                  - conditions: "{{ operation in ['pause', 'play', 'next', 'previous'] }}"
+                    sequence:
+                      - action: >-
+                          {{ {'pause': 'media_player.media_pause', 'play': 'media_player.media_play', 'next': 'media_player.media_next_track', 'previous': 'media_player.media_previous_track'}[operation] }}
+                        target:
+                          entity_id: '{{ target_player }}'
+                      - if:
+                          - condition: template
+                            value_template: "{{ operation in ['next', 'previous'] and is_state(target_player, 'paused') }}"
+                        then:
+                          - action: media_player.media_play
+                            target:
+                              entity_id: '{{ target_player }}'
+                  - conditions: "{{ operation == 'volume' }}"
+                    sequence:
+                      - action: media_player.volume_set
+                        target:
+                          entity_id: '{{ target_player }}'
+                        data:
+                          volume_level: '{{ volume_percent | float / 100 }}'
+                  - conditions: "{{ operation in ['mute', 'unmute'] }}"
+                    sequence:
+                      - action: media_player.volume_mute
+                        target:
+                          entity_id: '{{ target_player }}'
+                        data:
+                          is_volume_muted: "{{ operation == 'mute' }}"
+              - action: input_select.select_option
+                target:
+                  entity_id: input_select.music_last_room
+                data:
+                  option: '{{ target_room }}'
+              - variables:
+                  result:
+                    success: true
+                    room: '{{ target_room }}'
+                    player_entity: '{{ target_player }}'
+                    operation: '{{ operation }}'
+                    message: '{{ target_room }}操作请求已执行，已保存为最近操作房间'
+              - stop: 媒体操作已执行
+                response_variable: result
+        default:
+          - variables:
+              result:
+                success: false
+                message: 不支持的操作
+          - stop: 操作无效
+            response_variable: result
+automation:
+  - id: family_music_shared_sleep_scheduler
+    alias: 家庭音乐公共睡眠巡检
+    description: 每15秒检查共享睡眠计划，启动后补处理逾期计划；不再使用每播放器timer。
+    triggers:
+      - trigger: time_pattern
+        seconds: /15
+      - trigger: homeassistant
+        event: start
+    conditions:
+      - condition: template
+        value_template: "{{ states('todo.family_music_sleep') | int(0) > 0 }}"
+    actions:
+      - action: script.household_music_sleep_scheduler
+        data:
+          operation: tick
+    mode: single

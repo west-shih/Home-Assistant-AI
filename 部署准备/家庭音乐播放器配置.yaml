@@ -1,0 +1,64 @@
+alias: 家庭音乐播放器配置
+description: 唯一播放器维护入口，只修改players中的名称与播放器实体；房间列表、收藏和睡眠调度自动适配。
+mode: queued
+max: 20
+fields:
+  room:
+    name: 播放器名称
+    description: 自动或留空使用最近播放器；明确名称须与players的键一致。
+    default: 自动
+    selector:
+      text: null
+sequence:
+  - variables:
+      players:
+        卧室: media_player.wo_shi_l
+        一楼: media_player.wo_shi_r
+  - variables:
+      available_rooms: '{{ players.keys() | list }}'
+      cached_room: "{{ states('input_select.music_last_room') }}"
+  - variables:
+      target_room: >-
+        {% set r = room | default('自动', true) %}
+        {{ (cached_room if cached_room in players else available_rooms[0]) if r == '自动' else r }}
+  - if:
+      - condition: template
+        value_template: '{{ target_room not in players }}'
+    then:
+      - variables:
+          result:
+            success: false
+            players: '{{ players }}'
+            available_rooms: '{{ available_rooms }}'
+            message: 未配置该播放器名称，请按可用列表选择
+      - stop: 未找到播放器
+        response_variable: result
+  - if:
+      - condition: template
+        value_template: "{{ state_attr('input_select.music_last_room', 'options') != available_rooms }}"
+    then:
+      - action: input_select.set_options
+        target:
+          entity_id: input_select.music_last_room
+        data:
+          options: '{{ available_rooms }}'
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.music_last_room
+        data:
+          option: '{{ cached_room if cached_room in players else available_rooms[0] }}'
+  - variables:
+      target_player: '{{ players[target_room] }}'
+  - variables:
+      favorite_candidates: >-
+        {{ device_entities(device_id(target_player)) | select('match', '^button\.') | select('search', 'favorite_current_song$') | list if device_id(target_player) else [] }}
+  - variables:
+      result:
+        success: true
+        target_room: '{{ target_room }}'
+        target_player: '{{ target_player }}'
+        favorite_button: "{{ favorite_candidates[0] if favorite_candidates | count == 1 else '' }}"
+        players: '{{ players }}'
+        available_rooms: '{{ available_rooms }}'
+  - stop: 已解析播放器
+    response_variable: result

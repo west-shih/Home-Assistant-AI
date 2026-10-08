@@ -1,0 +1,327 @@
+alias: 家庭音乐搜索播放
+description: >-
+  在 Music Assistant
+  搜索歌手、歌曲或歌单。query必填；search_only为true只返回候选、不播放，为false在所选房间播放并替换队列。可同时传volume_percent和sleep_minutes组合设置；搜索模式不改变播放、音量和定时。
+mode: queued
+max: 5
+fields:
+  query:
+    name: 音乐搜索词
+    description: 仅填写歌手、歌曲、歌单或风格关键词。
+    required: true
+    selector:
+      text: null
+  search_only:
+    name: 只搜索不播放
+    description: 查找或列出候选时为true；要求听歌或播放时为false。
+    default: false
+    selector:
+      boolean: null
+  volume_percent:
+    name: 播放音量百分比
+    description: 可选，0到100；省略保持当前音量。
+    selector:
+      number:
+        min: 0
+        max: 100
+        mode: box
+  sleep_minutes:
+    name: 多少分钟后暂停
+    description: 可选，1到480；省略不改变现有定时。
+    selector:
+      number:
+        min: 1
+        max: 480
+        mode: box
+  room:
+    name: 播放房间
+    description: 自动使用最近房间；明确名称必须在家庭音乐播放器配置中注册。
+    default: 自动
+    selector:
+      text: null
+  randomize:
+    name: 随机选择和播放
+    description: 泛听歌手或风格时为true；明确点名歌曲或歌单时为false。
+    default: true
+    selector:
+      boolean: null
+  artist:
+    name: 指定歌手
+    description: 指定歌手时必传准确姓名；按歌曲演唱者匹配，禁止用同名歌单代替。风格或歌单搜索留空。
+    selector:
+      text: null
+  allow_versions:
+    name: 允许特殊版本
+    description: 用户明确要求翻唱、现场、混音、伴奏等版本时为true，默认优先普通录音。
+    default: false
+    selector:
+      boolean: null
+sequence:
+  - action: script.household_music_player_config
+    data:
+      room: '{{ room | default(''自动'', true) }}'
+    response_variable: player_config
+  - if:
+      - condition: template
+        value_template: '{{ not player_config.success }}'
+    then:
+      - variables:
+          result: '{{ player_config }}'
+      - stop: 播放器配置无效
+        response_variable: result
+  - variables:
+      target_room: '{{ player_config.target_room }}'
+      target_player: '{{ player_config.target_player }}'
+      favorite_button: '{{ player_config.favorite_button }}'
+  - variables:
+      search_term: '{{ query | default('''') | trim }}'
+      requested_artist: '{{ artist | default('''', true) | trim }}'
+  - if:
+      - condition: template
+        value_template: '{{ search_term | length == 0 }}'
+    then:
+      - variables:
+          result:
+            success: false
+            message: 缺少音乐搜索词
+      - stop: 缺少搜索词
+        response_variable: result
+  - variables:
+      allow_altered: >-
+        {{ allow_versions | default(false) | bool or search_term | lower |
+        regex_search('魔改|魔性|加速|变速|降速|升调|降调|变调|鬼畜|喊麦|车载|串烧|重低音|慢摇|混音|remix|bootleg|mashup|sped.?up|slowed|nightcore|(^|[^a-z])d[jd]([^a-z]|$)')
+        }}
+      fixed_baby_noise: >-
+        {{ search_term | regex_replace('\s+', '') in ['宝宝白噪音', '宝宝催眠曲', '宝宝睡眠曲',
+        '白噪音宝宝', '白噪音1(嘘声+羊水声)', '白噪音1（嘘声+羊水声）'] }}
+  - if:
+      - condition: template
+        value_template: '{{ fixed_baby_noise | bool }}'
+    then:
+      - variables:
+          play_uris:
+            - library://track/208
+          selected_name: 白噪音1(嘘声+羊水声)
+          candidate_summary: 本地音频：白噪音1(嘘声+羊水声)；宝宝白噪音；library://track/208
+    else:
+      - action: music_assistant.search
+        data:
+          config_entry_id: 01M3SDT8RDK4YMX3QHTE2KYV4H
+          name: '{{ search_term }}'
+          media_type:
+            - playlist
+            - track
+          limit: 20
+          library_only: false
+        response_variable: music_results
+      - variables:
+          playlist_indices: >-
+            {% set ns = namespace(items=[]) %} {% for item in
+            music_results.playlists | default([]) %}
+              {% if allow_altered | bool or not (item.name | lower | regex_search('魔改|魔性|加速|变速|降速|升调|降调|变调|鬼畜|喊麦|车载|串烧|重低音|慢摇|混音|remix|bootleg|mashup|sped.?up|slowed|nightcore|(^|[^a-z])d[jd]([^a-z]|$)')) %}{% set ns.items = ns.items + [loop.index0] %}{% endif %}
+            {% endfor %} {{ ns.items }}
+          track_indices: >-
+            {% set ns = namespace(items=[]) %} {% for item in
+            music_results.tracks | default([]) %}
+              {% set label = ((item.name | default('')) ~ ' ' ~ (item.version | default('', true))) | lower %}
+              {% if allow_altered | bool or not (label | regex_search('魔改|魔性|加速|变速|降速|升调|降调|变调|鬼畜|喊麦|车载|串烧|重低音|慢摇|混音|remix|bootleg|mashup|sped.?up|slowed|nightcore|(^|[^a-z])d[jd]([^a-z]|$)')) %}{% set ns.items = ns.items + [loop.index0] %}{% endif %}
+            {% endfor %} {{ ns.items }}
+          artist_tracks: >-
+            {% set ns = namespace(uris=[]) %} {% for t in music_results.tracks |
+            default([]) %}
+              {% set names = t.artists | default([]) | map(attribute='name') | map('lower') | list %}
+              {% set label = ((t.name | default('')) ~ ' ' ~ (t.version | default('', true))) | lower %}
+              {% set special = label | regex_search('翻唱|伴奏|纯音乐|卡拉|混音|现场|演唱会|cover|karaoke|instrumental|remix|live') %}
+              {% if requested_artist | lower in names and (allow_versions | default(false) | bool or not special) and (allow_altered | bool or not (label | regex_search('魔改|魔性|加速|变速|降速|升调|降调|变调|鬼畜|喊麦|车载|串烧|重低音|慢摇|混音|remix|bootleg|mashup|sped.?up|slowed|nightcore|(^|[^a-z])d[jd]([^a-z]|$)'))) and t.uri not in ns.uris %}
+                {% set ns.uris = ns.uris + [t.uri] %}
+              {% endif %}
+            {% endfor %} {{ ns.uris }}
+      - variables:
+          playlist_count: '{{ playlist_indices | count }}'
+          track_count: '{{ track_indices | count }}'
+      - variables:
+          use_playlist: >-
+            {{ requested_artist | length == 0 and playlist_count | int > 0 and
+            (randomize | default(true) | bool or track_count | int == 0 or
+            music_results.playlists[playlist_indices[0] | int].name ==
+            search_term) }}
+      - variables:
+          selected_index: >-
+            {% set pool = playlist_indices if use_playlist | bool else
+            track_indices %} {{ (pool | random if randomize | default(true) |
+            bool else pool[0]) if pool | count > 0 else 0 }}
+      - variables:
+          play_uris: |-
+            {% if requested_artist | length > 0 %}
+              {% set ns = namespace(pool=artist_tracks | list, output=[]) %}
+              {% for i in range(artist_tracks | count) %}
+                {% set chosen = ns.pool | random if randomize | default(true) | bool else ns.pool[0] %}
+                {% set ns.output = ns.output + [chosen] %}
+                {% set ns.pool = ns.pool | reject('eq', chosen) | list %}
+              {% endfor %}
+              {{ ns.output if randomize | default(true) | bool else ns.output[:1] }}
+            {% elif use_playlist | bool %}
+              {{ [music_results.playlists[selected_index | int].uri] }}
+            {% elif track_count | int > 0 %}
+              {{ [music_results.tracks[selected_index | int].uri] }}
+            {% else %}{{ [] }}{% endif %}
+          selected_name: >-
+            {% if requested_artist | length > 0 %}{{ requested_artist }}本人歌曲（{{
+            artist_tracks | count if randomize | default(true) | bool else
+            ([artist_tracks | count, 1] | min) }}首） {% elif use_playlist | bool
+            %}{{ music_results.playlists[selected_index | int].name }} {% elif
+            track_count | int > 0 %}{{ music_results.tracks[selected_index |
+            int].name }}{% else %}{{ '' }}{% endif %}
+          candidate_summary: >-
+            {% if requested_artist | length == 0 %}{% for item in
+            music_results.playlists | default([]) %}{% if loop.index0 in
+            playlist_indices %}歌单：{{ item.name }}；{% endif %}{% endfor %}{%
+            endif %} {% for item in music_results.tracks | default([]) %}{% if
+            (requested_artist | length == 0 and loop.index0 in track_indices) or
+            item.uri in artist_tracks %}歌曲：{{ item.name }}（{{ item.artists |
+            default([]) | map(attribute='name') | join('、') }}）；{% endif %}{%
+            endfor %}
+  - if:
+      - condition: template
+        value_template: '{{ play_uris | count == 0 }}'
+    then:
+      - variables:
+          result:
+            success: false
+            message: 没有找到符合 {{ search_term }} 的歌曲；指定歌手时只接受演唱者匹配且符合版本要求的结果，不用翻唱或歌单替代
+      - stop: 无搜索结果
+        response_variable: result
+  - if:
+      - condition: template
+        value_template: '{{ search_only | default(false) | bool }}'
+    then:
+      - variables:
+          result:
+            success: true
+            played: false
+            query: '{{ search_term }}'
+            candidates: '{{ candidate_summary | trim }}'
+            message: 只返回搜索结果，没有播放
+      - stop: 搜索完成
+        response_variable: result
+  - if:
+      - condition: template
+        value_template: '{{ fixed_baby_noise | bool or volume_percent is defined }}'
+    then:
+      - action: media_player.volume_set
+        target:
+          entity_id: '{{ target_player }}'
+        data:
+          volume_level: >-
+            {{ ([0, ([volume_percent | default(12 if fixed_baby_noise | bool
+            else 20) | float(12), 100] | min)] | max) / 100 }}
+  - action: media_player.volume_mute
+    target:
+      entity_id: '{{ target_player }}'
+    data:
+      is_volume_muted: false
+  - action: media_player.shuffle_set
+    target:
+      entity_id: '{{ target_player }}'
+    data:
+      shuffle: >-
+        {{ not fixed_baby_noise | bool and requested_artist | length == 0 and
+        randomize | default(true) | bool }}
+  - action: music_assistant.play_media
+    target:
+      entity_id: '{{ target_player }}'
+    data:
+      media_id: '{{ play_uris }}'
+      enqueue: replace
+  - action: media_player.repeat_set
+    target:
+      entity_id: '{{ target_player }}'
+    data:
+      repeat: '{{ ''one'' if fixed_baby_noise | bool else ''off'' }}'
+  - variables:
+      playback_confirmed: false
+      recovery_attempts: 0
+  - repeat:
+      while:
+        - condition: template
+          value_template: '{{ repeat.index <= 3 and not playback_confirmed | bool }}'
+      sequence:
+        - variables:
+            recovery_attempts: '{{ repeat.index }}'
+        - if:
+            - condition: template
+              value_template: "{{ states(target_player) in ['paused', 'idle', 'off'] }}"
+          then:
+            - action: media_player.media_play
+              continue_on_error: true
+              target:
+                entity_id: '{{ target_player }}'
+        - wait_template: "{{ is_state(target_player, 'playing') }}"
+          timeout:
+            seconds: '{{ 20 if repeat.index == 1 else 15 }}'
+          continue_on_timeout: true
+        - if:
+            - condition: template
+              value_template: "{{ is_state(target_player, 'playing') }}"
+          then:
+            - wait_template: "{{ not is_state(target_player, 'playing') }}"
+              timeout: '00:00:03'
+              continue_on_timeout: true
+            - variables:
+                playback_confirmed: "{{ not wait.completed and is_state(target_player, 'playing') }}"
+  - if:
+      - condition: template
+        value_template: '{{ not playback_confirmed | bool }}'
+    then:
+      - variables:
+          result:
+            success: false
+            played: false
+            loading: "{{ is_state(target_player, 'buffering') }}"
+            room: '{{ target_room }}'
+            media_name: '{{ selected_name | trim }}'
+            player_state: '{{ states(target_player) }}'
+            recovery_attempts: '{{ recovery_attempts }}'
+            message: >-
+              {% if is_state(target_player, 'buffering') %}音乐队列已更新，音源仍在缓冲，尚未确认稳定播放；没有重复搜索或替换队列。
+              {% else %}已等待音源并尝试恢复播放，仍未确认连续3秒播放；队列保留，可查看音源或播放器状态。{% endif %}
+      - stop: 未确认稳定播放
+        response_variable: result
+  - action: input_select.select_option
+    target:
+      entity_id: input_select.music_last_room
+    data:
+      option: '{{ target_room }}'
+  - if:
+      - condition: template
+        value_template: '{{ sleep_minutes is defined }}'
+    then:
+      - action: script.household_music_sleep_scheduler
+        data:
+          operation: set
+          player_entity: '{{ target_player }}'
+          minutes: '{{ [1, ([sleep_minutes | int(30), 480] | min)] | max }}'
+        response_variable: sleep_result
+      - if:
+          - condition: template
+            value_template: '{{ not sleep_result.success }}'
+        then:
+          - variables:
+              result:
+                success: false
+                played: true
+                room: '{{ target_room }}'
+                message: 音乐已播放，但睡眠计划设置失败
+          - stop: 睡眠设置失败
+            response_variable: result
+  - variables:
+      result:
+        success: true
+        played: true
+        stable_seconds: 3
+        recovery_attempts: '{{ recovery_attempts }}'
+        room: '{{ target_room }}'
+        message: '{{ target_room }}已连续播放3秒：{{ selected_name | trim }}'
+        media_name: '{{ selected_name | trim }}'
+  - stop: 播放请求已发送
+    response_variable: result

@@ -1,0 +1,15 @@
+alias: 家庭音乐公共睡眠巡检
+description: 每15秒检查共享睡眠计划，启动后补处理逾期计划；不再使用每播放器timer。
+triggers:
+  - trigger: time_pattern
+    seconds: /15
+  - trigger: homeassistant
+    event: start
+conditions:
+  - condition: template
+    value_template: "{{ states('todo.family_music_sleep') | int(0) > 0 }}"
+actions:
+  - action: script.household_music_sleep_scheduler
+    data:
+      operation: tick
+mode: single

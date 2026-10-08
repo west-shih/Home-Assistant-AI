@@ -1,0 +1,168 @@
+alias: 家庭音乐睡眠调度
+description: 公共睡眠调度，所有播放器共享持久计划列表，按播放器实体独立记录截止时间。
+mode: queued
+max: 20
+fields:
+  operation:
+    name: 内部操作
+    required: true
+    selector:
+      select:
+        options:
+          - set
+          - cancel
+          - status
+          - tick
+  player_entity:
+    name: 播放器实体
+    selector:
+      text: null
+  minutes:
+    name: 分钟数
+    selector:
+      number:
+        min: 1
+        max: 480
+        mode: box
+sequence:
+  - action: script.household_music_player_config
+    data:
+      room: 自动
+    response_variable: registry
+  - variables:
+      target: "{{ player_entity | default('', true) }}"
+      allowed_players: '{{ registry.players.values() | list }}'
+  - if:
+      - condition: template
+        value_template: "{{ operation not in ['set','cancel','status','tick'] or (operation != 'tick' and target not in allowed_players) or (operation == 'set' and (minutes is not defined or minutes | float(0) < 1 or minutes | float(0) > 480)) }}"
+    then:
+      - variables:
+          result:
+            success: false
+            message: 睡眠操作、播放器或分钟数无效
+      - stop: 调度参数无效
+        response_variable: result
+  - action: todo.get_items
+    target:
+      entity_id: todo.family_music_sleep
+    data:
+      status: needs_action
+    response_variable: schedule_data
+  - variables:
+      pending: "{{ schedule_data['todo.family_music_sleep']['items'] | default([]) }}"
+  - variables:
+      matches: "{{ pending | selectattr('summary','eq',target) | list }}"
+  - choose:
+      - conditions: "{{ operation == 'set' }}"
+        sequence:
+          - variables:
+              deadline: '{{ (now() + timedelta(minutes=minutes | float)).isoformat() }}'
+          - if:
+              - condition: template
+                value_template: '{{ matches | count > 0 }}'
+            then:
+              - action: todo.update_item
+                target:
+                  entity_id: todo.family_music_sleep
+                data:
+                  item: '{{ matches[0].uid }}'
+                  due_datetime: '{{ deadline }}'
+                  description: 家庭音乐睡眠计划，由公共调度管理
+              - repeat:
+                  for_each: '{{ matches[1:] }}'
+                  sequence:
+                    - action: todo.update_item
+                      target:
+                        entity_id: todo.family_music_sleep
+                      data:
+                        item: '{{ repeat.item.uid }}'
+                        status: completed
+            else:
+              - action: todo.add_item
+                target:
+                  entity_id: todo.family_music_sleep
+                data:
+                  item: '{{ target }}'
+                  due_datetime: '{{ deadline }}'
+                  description: 家庭音乐睡眠计划，由公共调度管理
+          - variables:
+              result:
+                success: true
+                timer_state: active
+                timer_finishes_at: '{{ deadline }}'
+                remaining_seconds: '{{ (minutes | float * 60) | int }}'
+                message: 已保存该播放器的睡眠截止时间
+          - stop: 已设置公共睡眠计划
+            response_variable: result
+      - conditions: "{{ operation == 'cancel' }}"
+        sequence:
+          - repeat:
+              for_each: '{{ matches }}'
+              sequence:
+                - action: todo.update_item
+                  target:
+                    entity_id: todo.family_music_sleep
+                  data:
+                    item: '{{ repeat.item.uid }}'
+                    status: completed
+          - variables:
+              result:
+                success: true
+                timer_state: idle
+                remaining_seconds: 0
+                message: 已取消该播放器睡眠计划，不改变播放
+          - stop: 已取消公共睡眠计划
+            response_variable: result
+      - conditions: "{{ operation == 'status' }}"
+        sequence:
+          - variables:
+              result:
+                success: true
+                timer_state: "{{ 'active' if matches | count > 0 else 'idle' }}"
+                timer_finishes_at: "{{ matches[0].due | default('', true) if matches | count > 0 else '' }}"
+                remaining_seconds: "{{ [0, (as_timestamp(matches[0].due, 0) - as_timestamp(now())) | int] | max if matches | count > 0 else 0 }}"
+          - stop: 已查询公共睡眠计划
+            response_variable: result
+      - conditions: "{{ operation == 'tick' }}"
+        sequence:
+          - repeat:
+              for_each: '{{ pending }}'
+              sequence:
+                - if:
+                    - condition: template
+                      value_template: "{{ repeat.item.summary not in allowed_players }}"
+                  then:
+                    - action: todo.update_item
+                      target:
+                        entity_id: todo.family_music_sleep
+                      data:
+                        item: '{{ repeat.item.uid }}'
+                        status: completed
+                  else:
+                    - if:
+                        - condition: template
+                          value_template: "{{ as_timestamp(repeat.item.due | default('', true), 0) > 0 and as_timestamp(repeat.item.due, 0) <= as_timestamp(now()) and states(repeat.item.summary) not in ['unknown','unavailable'] }}"
+                      then:
+                        - action: media_player.media_pause
+                          continue_on_error: true
+                          target:
+                            entity_id: '{{ repeat.item.summary }}'
+                        - wait_template: "{{ states(repeat.item.summary) in ['paused','idle','off'] }}"
+                          timeout: '00:00:02'
+                          continue_on_timeout: true
+                        - if:
+                            - condition: template
+                              value_template: "{{ states(repeat.item.summary) in ['paused','idle','off'] }}"
+                          then:
+                            - action: todo.update_item
+                              target:
+                                entity_id: todo.family_music_sleep
+                              data:
+                                item: '{{ repeat.item.uid }}'
+                                status: completed
+          - variables:
+              result:
+                success: true
+                message: 公共睡眠计划已巡检
+          - stop: 调度完成
+            response_variable: result

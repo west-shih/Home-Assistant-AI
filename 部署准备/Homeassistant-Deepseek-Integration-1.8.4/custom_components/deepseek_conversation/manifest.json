@@ -1,0 +1,26 @@
+{
+  "domain": "deepseek_conversation",
+  "name": "DeepSeek Conversation",
+  "after_dependencies": [
+    "ai_task",
+    "assist_pipeline",
+    "intent"
+  ],
+  "codeowners": [
+    "@leofleischmann"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "conversation"
+  ],
+  "documentation": "https://github.com/leofleischmann/Homeassistant-Deepseek-Integration",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/leofleischmann/Homeassistant-Deepseek-Integration/issues",
+  "requirements": [
+    "openai>=1.68.2,<3",
+    "voluptuous-openapi>=0.2.0,<0.5",
+    "h2>=4.1.0,<5"
+  ],
+  "version": "1.8.4"
+}

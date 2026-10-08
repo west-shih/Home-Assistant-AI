@@ -1,0 +1,58 @@
+alias: 中文语音搜索并播放音乐到卧室
+description: 通过中文语句搜索 MA 的歌单或歌曲并在卧室播放
+triggers:
+  - trigger: conversation
+    command:
+      - 我要听{query}
+      - 我想听{query}
+      - 播放{query}
+      - 给我放{query}
+      - 放点{query}
+      - 来点{query}
+      - 在卧室R播放{query}
+conditions: []
+actions:
+  - variables:
+      search_term: '{{ trigger.slots.query | trim }}'
+  - action: music_assistant.search
+    data:
+      config_entry_id: 01M3SDT8RDK4YMX3QHTE2KYV4H
+      name: '{{ search_term }}'
+      media_type:
+        - playlist
+        - track
+      limit: 5
+      library_only: false
+    response_variable: music_results
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: '{{ music_results.playlists | default([]) | count > 0 }}'
+        sequence:
+          - action: music_assistant.play_media
+            target:
+              entity_id: media_player.wo_shi_l
+            data:
+              media_id: '{{ music_results.playlists[0].uri }}'
+              enqueue: replace
+          - action: media_player.media_play
+            target:
+              entity_id: media_player.wo_shi_l
+          - set_conversation_response: 正在卧室播放歌单 {{ music_results.playlists[0].name }}
+      - conditions:
+          - condition: template
+            value_template: '{{ music_results.tracks | default([]) | count > 0 }}'
+        sequence:
+          - action: music_assistant.play_media
+            target:
+              entity_id: media_player.wo_shi_l
+            data:
+              media_id: '{{ music_results.tracks[0].uri }}'
+              enqueue: replace
+          - action: media_player.media_play
+            target:
+              entity_id: media_player.wo_shi_l
+          - set_conversation_response: 正在卧室播放 {{ music_results.tracks[0].name }}
+    default:
+      - set_conversation_response: 没有找到与 {{ search_term }} 相关的歌单或歌曲
+mode: single

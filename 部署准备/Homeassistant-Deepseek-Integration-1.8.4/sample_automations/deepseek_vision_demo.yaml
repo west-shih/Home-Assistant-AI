@@ -1,0 +1,74 @@
+# Vision demo — sends an image to DeepSeek and reads back a description.
+#
+# Two prerequisites, both one-off:
+#
+#   1. A model that accepts images, and "Allow images" enabled. On the official
+#      API the only such model is deepseek-v4-flash-vision-exp, which the call
+#      below sets per request, so the entry's own model stays untouched.
+#
+#   2. An image Home Assistant is allowed to read. It only reads from allowed
+#      folders, and custom_components is not one of them — so either:
+#
+#      a) point image_path at any picture in /config/www, which is allowed by
+#         default and needs no restart, for example /config/www/test.jpg
+#
+#      b) or keep the bundled brand icon below and allow its folder once, in
+#         configuration.yaml, followed by a restart:
+#
+#           homeassistant:
+#             allowlist_external_dirs:
+#               - /config/custom_components/deepseek_conversation
+#
+# Trigger: Developer tools → Events → deepseek_vision_demo
+
+alias: DeepSeek Vision Demo
+description: generate_content with filenames — describes an image.
+mode: single
+
+triggers:
+  - trigger: event
+    event_type: deepseek_vision_demo
+
+conditions:
+  - condition: template
+    value_template: >-
+      {% set ns = namespace(ok=false) %}
+      {% for e in integration_entities('deepseek_conversation') %}
+        {% if e.startswith('conversation.') %}{% set ns.ok = true %}{% endif %}
+      {% endfor %}
+      {{ ns.ok }}
+
+actions:
+  - variables:
+      deepseek_agent: >-
+        {% for e in integration_entities('deepseek_conversation') %}
+        {%- if e.startswith('conversation.') %}{{ e }}{% break %}{% endif %}
+        {% endfor %}
+      # Option (a) above needs no restart — swap this for your own picture:
+      # image_path: /config/www/test.jpg
+      image_path: /config/custom_components/deepseek_conversation/brand/icon.png
+
+  - action: deepseek_conversation.generate_content
+    data:
+      agent: "{{ deepseek_agent }}"
+      prompt: >-
+        Describe what you see in this image in two short sentences.
+        Reply in English.
+      filenames:
+        - "{{ image_path }}"
+      chat_model: deepseek-v4-flash-vision-exp
+      thinking_enabled: false
+      max_tokens: 200
+    response_variable: deepseek_vision
+
+  - action: persistent_notification.create
+    data:
+      title: DeepSeek Vision Demo
+      message: >-
+        Image: {{ image_path }}
+
+        {{ deepseek_vision.text }}
+
+        usage: {{ deepseek_vision.usage }}
+        (prompt_tokens well above ~100 usually means the image was sent)
+      notification_id: deepseek_vision_demo

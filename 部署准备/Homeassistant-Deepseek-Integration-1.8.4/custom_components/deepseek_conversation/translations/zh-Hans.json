@@ -1,0 +1,384 @@
+{
+    "title": "DeepSeek Conversation",
+    "entity": {
+        "sensor": {
+            "prompt_tokens": {
+                "name": "提示词令牌"
+            },
+            "completion_tokens": {
+                "name": "补全令牌"
+            },
+            "total_tokens": {
+                "name": "总令牌数"
+            },
+            "last_request_tokens": {
+                "name": "上次请求令牌"
+            },
+            "reasoning_tokens": {
+                "name": "推理令牌"
+            },
+            "cache_hit_tokens": {
+                "name": "缓存命中令牌"
+            },
+            "api_requests": {
+                "name": "API 请求次数"
+            },
+            "last_request_prompt_tokens": {
+                "name": "上次请求提示词令牌"
+            },
+            "last_request_completion_tokens": {
+                "name": "上次请求补全令牌"
+            }
+        },
+        "button": {
+            "reset_usage": {
+                "name": "重置用量"
+            }
+        }
+    },
+    "common": {
+        "debug_notification_title": "DeepSeek 诊断已完成",
+        "debug_notification_report": "报告：{path}",
+        "debug_notification_summary": "摘要：{summary}",
+        "debug_notification_errors_heading": "错误（如有）：",
+        "debug_notification_no_errors": "（无）",
+        "debug_notification_error_line": "- {name}：{error}",
+        "debug_notification_details": "详情：打开报告文件（文本 + JSON 附录）。"
+    },
+    "exceptions": {
+        "invalid_config_entry": {
+            "message": "未找到配置条目「{config_entry}」，或该条目不属于 DeepSeek Conversation。"
+        },
+        "invalid_agent": {
+            "message": "“{agent}” 不是 DeepSeek 代理。请选择本集成的对话或 AI 任务实体。"
+        },
+        "agent_entry_mismatch": {
+            "message": "代理“{agent}”属于另一个配置项。请仅指定代理，或使两者一致。"
+        },
+        "no_target": {
+            "message": "请指定配置项或代理。"
+        },
+        "entry_not_loaded": {
+            "message": "配置项“{config_entry}”未加载，目前无法作答。"
+        }
+    },
+    "config": {
+        "step": {
+            "user": {
+                "title": "DeepSeek API 配置",
+                "data": {
+                    "api_key": "API 密钥",
+                    "base_url": "API 基础地址",
+                    "brave_api_key": "Brave Search API 密钥（可选）",
+                    "chat_model": "模型"
+                },
+                "data_description": {
+                    "brave_api_key": "可选。为本集成的每个代理添加“网页搜索”开关，仅它们可以使用。"
+                },
+                "description": "连接 DeepSeek API。默认模型为 DeepSeek V4 Flash。旧名称 deepseek-chat 和 deepseek-reasoner 已于 2026-07-24 下线，不再受支持。"
+            },
+            "reauth_confirm": {
+                "title": "重新验证 DeepSeek",
+                "description": "您的 DeepSeek API 密钥被拒绝。请输入有效的 API 密钥以恢复集成。",
+                "data": {
+                    "api_key": "API 密钥"
+                },
+                "data_description": {
+                    "api_key": "来自 platform.deepseek.com 的 API 密钥"
+                }
+            },
+            "reconfigure": {
+                "title": "重新配置 DeepSeek",
+                "description": "更新 API 密钥或基础地址。Assist 与模型选项保持不变。",
+                "data": {
+                    "api_key": "API 密钥",
+                    "base_url": "API 基础地址",
+                    "brave_api_key": "Brave Search API 密钥（可选）"
+                },
+                "data_description": {
+                    "api_key": "来自 platform.deepseek.com 的 API 密钥",
+                    "brave_api_key": "留空以保留当前 Brave 密钥。输入新密钥以替换。输入单个短横线 (-) 以移除网页搜索。"
+                }
+            }
+        },
+        "error": {
+            "cannot_connect": "无法连接",
+            "invalid_auth": "身份验证无效",
+            "api_error": "API 错误",
+            "unknown": "未知错误",
+            "url_required": "必须填写基础地址",
+            "model_retired": "该模型已于 2026-07-24 被 DeepSeek 下线。请选择 DeepSeek V4 Flash 或 V4 Pro。"
+        },
+        "abort": {
+            "already_configured": "已配置过",
+            "reauth_successful": "重新验证成功。",
+            "reconfigure_successful": "重新配置成功。"
+        }
+    },
+    "config_subentries": {
+        "conversation": {
+            "entry_type": "对话代理",
+            "initiate_flow": {
+                "user": "添加对话代理",
+                "reconfigure": "重新配置对话代理"
+            },
+            "step": {
+                "init": {
+                    "title": "对话代理",
+                    "description": "此代理在 Assist 中作答。多个代理可共用一个 API 密钥——语音用快速代理，自动化用更强的代理。",
+                    "data": {
+                        "name": "名称",
+                        "prompt": "指令",
+                        "llm_hass_api": "Home Assistant API",
+                        "web_search": "网页搜索（Brave）",
+                        "chat_model": "模型",
+                        "recommended": "推荐设置"
+                    },
+                    "data_description": {
+                        "prompt": "一个模板。可用变量见 README。",
+                        "llm_hass_api": "未选择则无法控制你的家。",
+                        "chat_model": "Flash 最快，Pro 最强，Vision 可接收图片。",
+                        "recommended": "关闭后将打开包含其余项的第二步。",
+                        "web_search": "允许该代理使用你的 Brave 密钥在公开网络上查询。"
+                    }
+                },
+                "advanced": {
+                    "title": "高级设置",
+                    "description": "推荐设置会替你决定的全部内容。保持字段不变即使用默认值。",
+                    "sections": {
+                        "response": {
+                            "name": "回复",
+                            "data": {
+                                "max_tokens": "最大回复长度",
+                                "temperature": "温度",
+                                "top_p": "Top P",
+                                "thinking_enabled": "推理",
+                                "reasoning_effort": "推理强度"
+                            },
+                            "data_description": {
+                                "max_tokens": "以 token 计。不限制提问长度。",
+                                "temperature": "越高越多样。开启推理时无效。",
+                                "top_p": "温度的替代项。开启推理时无效。",
+                                "thinking_enabled": "更慢、更贵，但擅长难题。",
+                                "reasoning_effort": "模型可思考多久。"
+                            },
+                            "description": "此代理如何作答。"
+                        },
+                        "tools": {
+                            "name": "工具",
+                            "data": {
+                                "max_tool_iterations": "最大工具轮数",
+                                "max_tool_result_chars": "工具结果上限"
+                            },
+                            "data_description": {
+                                "max_tool_iterations": "模型作答前可调用工具的次数。",
+                                "max_tool_result_chars": "缩短过长的工具结果。0 表示保留全部。"
+                            },
+                            "description": "仅在该代理拥有工具时生效。"
+                        },
+                        "conversation": {
+                            "name": "对话",
+                            "data": {
+                                "strip_markdown": "移除格式",
+                                "include_user_context": "告知模型谁在说话",
+                                "max_history_rounds": "对话历史"
+                            },
+                            "data_description": {
+                                "strip_markdown": "移除星号和标题，避免被读出。",
+                                "include_user_context": "在提示词中加入说话人的姓名和房间。",
+                                "max_history_rounds": "随附发送多少轮历史。0 表示全部。"
+                            },
+                            "description": "仅适用于 Assist。"
+                        },
+                        "limits": {
+                            "name": "限制与输入",
+                            "data": {
+                                "request_timeout": "请求超时",
+                                "vision_enabled": "允许图片"
+                            },
+                            "data_description": {
+                                "request_timeout": "等待 API 的最长时间。generate_content 等待更久。",
+                                "vision_enabled": "需要支持图片的模型。"
+                            }
+                        }
+                    }
+                }
+            },
+            "abort": {
+                "entry_not_loaded": "集成未加载时无法添加代理。",
+                "reconfigure_successful": "代理已更新。"
+            },
+            "error": {
+                "model_retired": "该模型已于 2026-07-24 被 DeepSeek 下线。请选择 DeepSeek V4 Flash 或 V4 Pro。"
+            }
+        },
+        "ai_task_data": {
+            "entry_type": "AI 任务",
+            "initiate_flow": {
+                "user": "添加 AI 任务",
+                "reconfigure": "重新配置 AI 任务"
+            },
+            "step": {
+                "init": {
+                    "title": "AI 任务",
+                    "description": "此实体在自动化中执行 ai_task.generate_data。它拥有独立的提示词和模型，与 Assist 代理互不影响。",
+                    "data": {
+                        "name": "名称",
+                        "prompt": "指令",
+                        "llm_hass_api": "Home Assistant API",
+                        "web_search": "网页搜索（Brave）",
+                        "chat_model": "模型",
+                        "recommended": "推荐设置"
+                    },
+                    "data_description": {
+                        "prompt": "一个模板。可用变量见 README。",
+                        "llm_hass_api": "未选择则无法控制你的家。",
+                        "chat_model": "Flash 最快，Pro 最强，Vision 可接收图片。",
+                        "recommended": "关闭后将打开包含其余项的第二步。",
+                        "web_search": "允许该代理使用你的 Brave 密钥在公开网络上查询。"
+                    }
+                },
+                "advanced": {
+                    "title": "高级设置",
+                    "description": "推荐设置会替你决定的全部内容。保持字段不变即使用默认值。",
+                    "sections": {
+                        "response": {
+                            "name": "回复",
+                            "data": {
+                                "max_tokens": "最大回复长度",
+                                "temperature": "温度",
+                                "top_p": "Top P",
+                                "thinking_enabled": "推理",
+                                "reasoning_effort": "推理强度"
+                            },
+                            "data_description": {
+                                "max_tokens": "以 token 计。不限制提问长度。",
+                                "temperature": "越高越多样。开启推理时无效。",
+                                "top_p": "温度的替代项。开启推理时无效。",
+                                "thinking_enabled": "更慢、更贵，但擅长难题。",
+                                "reasoning_effort": "模型可思考多久。"
+                            },
+                            "description": "此代理如何作答。"
+                        },
+                        "tools": {
+                            "name": "工具",
+                            "data": {
+                                "max_tool_iterations": "最大工具轮数",
+                                "max_tool_result_chars": "工具结果上限"
+                            },
+                            "data_description": {
+                                "max_tool_iterations": "模型作答前可调用工具的次数。",
+                                "max_tool_result_chars": "缩短过长的工具结果。0 表示保留全部。"
+                            },
+                            "description": "仅在该代理拥有工具时生效。"
+                        },
+                        "limits": {
+                            "name": "限制与输入",
+                            "data": {
+                                "request_timeout": "请求超时",
+                                "vision_enabled": "允许图片"
+                            },
+                            "data_description": {
+                                "request_timeout": "等待 API 的最长时间。generate_content 等待更久。",
+                                "vision_enabled": "需要支持图片的模型。"
+                            }
+                        }
+                    }
+                }
+            },
+            "abort": {
+                "entry_not_loaded": "集成未加载时无法添加代理。",
+                "reconfigure_successful": "代理已更新。"
+            },
+            "error": {
+                "model_retired": "该模型已于 2026-07-24 被 DeepSeek 下线。请选择 DeepSeek V4 Flash 或 V4 Pro。"
+            }
+        }
+    },
+    "selector": {
+        "chat_model": {
+            "options": {
+                "deepseek-v4-flash": "DeepSeek V4 Flash（快速，默认）",
+                "deepseek-v4-pro": "DeepSeek V4 Pro（能力最强）",
+                "deepseek-v4-flash-vision-exp": "DeepSeek V4 Flash Vision（实验性，支持图片输入）"
+            }
+        },
+        "reasoning_effort": {
+            "options": {
+                "low": "低",
+                "medium": "中",
+                "high": "高",
+                "max": "最大",
+                "xhigh": "极高"
+            }
+        }
+    },
+    "services": {
+        "generate_content": {
+            "name": "生成内容",
+            "description": "向 DeepSeek 发送提示并返回模型回复。可按单次调用覆盖模型、温度、推理、max_tokens 与 JSON 响应格式。启用推理时，响应除 `text` 与 `usage` 外还包含 `reasoning` 字段（模型的思考文本）。",
+            "fields": {
+                "config_entry": {
+                    "name": "集成条目",
+                    "description": "要使用的 DeepSeek Conversation 配置项。如已在上方指定代理，则无需填写。"
+                },
+                "prompt": {
+                    "name": "提示词",
+                    "description": "发送给模型的用户消息。"
+                },
+                "chat_model": {
+                    "name": "模型",
+                    "description": "仅本次调用覆盖模型；省略时使用集成选项。"
+                },
+                "temperature": {
+                    "name": "温度",
+                    "description": "仅本次调用覆盖温度（0–2）。若本次启用推理则忽略。"
+                },
+                "thinking_enabled": {
+                    "name": "启用推理",
+                    "description": "仅本次调用覆盖推理开关。启用时不发送集成的 temperature 与 top_p。"
+                },
+                "max_tokens": {
+                    "name": "最大令牌数",
+                    "description": "仅本次调用覆盖回复令牌上限。"
+                },
+                "response_format": {
+                    "name": "响应格式",
+                    "description": "设为 json_object 以请求模型返回 JSON 对象。"
+                },
+                "filenames": {
+                    "name": "文件路径",
+                    "description": "可选的本地图片路径（须在 allowlist_external_dirs 中允许）。"
+                },
+                "agent": {
+                    "name": "代理",
+                    "description": "由哪个代理作答，使用它的提示词、模型和工具。留空则使用配置项的第一个代理。"
+                }
+            }
+        },
+        "run_debug": {
+            "name": "运行 DeepSeek 诊断",
+            "description": "全面诊断：环境、HTTP 探测、可选 models.list、已注册的 HA LLM API、实体注册表、大量非流式与流式补全测试（思考开关、系统消息、多轮、JSON 模式、并行小请求）、日志摘录与报告末尾 JSON 附录。多次短 API 调用；写入 /config/deepseek_conversation_debug_report.txt 并发送简短通知（摘要 + 失败项）。",
+            "fields": {
+                "config_entry": {
+                    "name": "集成条目",
+                    "description": "要测试的 DeepSeek Conversation 配置项。如已在上方指定代理，则无需填写。"
+                },
+                "log_tail_lines": {
+                    "name": "日志摘录行数",
+                    "description": "从 home-assistant.log 追加的过滤行数（默认 600，允许 50–8000）。"
+                },
+                "agent": {
+                    "name": "代理",
+                    "description": "由哪个代理作答，使用它的提示词、模型和工具。留空则使用配置项的第一个代理。"
+                }
+            }
+        }
+    },
+    "issues": {
+        "legacy_chat_model": {
+            "title": "DeepSeek 模型 {old_model} 已下线",
+            "description": "DeepSeek 自 {retired_on} 起不再提供 {old_model}，因此“{entry_title}”无法再作出回复。模型已切换为 {new_model}。如需其他模型，请在“配置”中选择，然后关闭此提示。"
+        }
+    }
+}

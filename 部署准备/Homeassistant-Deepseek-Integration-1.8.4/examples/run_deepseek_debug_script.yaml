@@ -1,0 +1,11 @@
+# Beispiel-Skript für Home Assistant (UI: Einstellungen → Automatisierungen & Szenen → Skripte → Skript erstellen → Aktionen in YAML bearbeiten).
+# Ersetze die Entität durch den Agenten, den du prüfen willst — der Bericht
+# nutzt dessen Modell und Einstellungen.
+
+alias: "DeepSeek: Debug ausführen"
+mode: single
+sequence:
+  - action: deepseek_conversation.run_debug
+    data:
+      agent: conversation.deepseek_conversation
+      log_tail_lines: 600

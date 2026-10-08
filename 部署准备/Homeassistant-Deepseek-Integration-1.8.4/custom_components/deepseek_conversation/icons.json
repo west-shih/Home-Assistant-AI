@@ -1,0 +1,18 @@
+{
+  "services": {
+    "generate_content": {
+      "service": "mdi:receipt-text-outline"
+    },
+    "run_debug": {
+      "service": "mdi:bug-outline"
+    }
+  },
+  "entity": {
+    "button": {
+      "reset_usage": {
+        "default": "mdi:counter"
+      }
+    }
+  }
+}
+
