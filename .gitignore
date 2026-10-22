@@ -1,0 +1,14 @@
+# Personal deployment files and credentials
+/local/
+.env
+.env.*
+!.env.example
+secrets.yaml
+secrets.yml
+.storage/
+home-assistant_v2.db*
+*.log
+__pycache__/
+*.py[cod]
+.venv/
+.DS_Store

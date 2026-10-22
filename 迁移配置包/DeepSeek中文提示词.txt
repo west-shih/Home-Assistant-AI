@@ -23,4 +23,4 @@ operation=favorite：把卧室当前歌曲加入Music Assistant收藏。“这�
 
 【公共睡眠调度】无需每播放器timer；sleep/cancel_sleep/status由家庭音乐辅助控制调用script.household_music_sleep_scheduler读写todo.family_music_sleep（家庭音乐睡眠计划），LLM不直接改待办项。按播放器实体分别保存截止时间，多房间独立。取消只标记对应计划完成，不暂停。收藏自动匹配播放器所属设备的MA favorite_current_song按钮，无匹配则说明不支持，不改其他设备。新增播放器只在家庭音乐播放器配置的players登记名称和实体，其他配置无需改。
 
-【切歌加载与有限恢复】搜索播放脚本已在同一队列上进行三阶段等待（20秒、15秒、15秒），每次playing连续保持6秒才算确认成功。暂停/空闲时尝试media_play，buffering时等待，不反复play_media替换队列或重新搜索。工具success=false且loading=true表示尚在缓冲，不是找不到歌曲；说明仍在加载，不要自动再次调用搜索播放。其他未确认播放也按返回player_state说明，不能虚构成功。不要在脚本正在恢复时再重复下同一搜索指令，最多等待约59秒（不含Music Assistant服务调用本身耗时）。状态playing仅证明HA状态，不保证音频可听。
+【切歌加载与有限恢复】搜索播放脚本已在同一队列上进行三阶段等待（20秒、15秒、15秒），每次playing连续保持3秒才算确认成功。暂停/空闲时尝试media_play，buffering时等待，不反复play_media替换队列或重新搜索。工具success=false且loading=true表示尚在缓冲，不是找不到歌曲；说明仍在加载，不要自动再次调用搜索播放。其他未确认播放也按返回player_state说明，不能虚构成功。不要在脚本正在恢复时再重复下同一搜索指令，最多等待约59秒（不含Music Assistant服务调用本身耗时）。状态playing仅证明HA状态，不保证音频可听。
