@@ -1,0 +1,4 @@
+# 合并到已有 /config/configuration.yaml，不能覆盖全文件或重复 homeassistant 键。
+# 将部署副本 family_music.yaml 放到 /config/packages/。
+homeassistant:
+  packages: !include_dir_named packages

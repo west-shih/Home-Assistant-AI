@@ -1,0 +1,23 @@
+# 人工核对清单，不由 HA 自动加载，不是环境变量注入机制。
+# 实际值保存在 local/；密钥通过集成 UI / HA secrets 管理。
+home_assistant:
+  url: http://HA_HOST:8123
+  core_version: CHECK_IN_UI
+music_assistant:
+  url: http://MA_HOST:8095
+  server_version: CHECK_IN_UI
+  config_entry_id: REPLACE_WITH_MA_CONFIG_ENTRY_ID
+players:
+  卧室: media_player.REPLACE_BEDROOM
+  一楼: media_player.REPLACE_DOWNSTAIRS
+sleep_storage: todo.family_music_sleep
+baby_track_uri: REPLACE_WITH_BABY_TRACK_URI
+conversation:
+  integration: deepseek_conversation
+  integration_version: CHECK_INSTALLED_VERSION
+  model: CHECK_AVAILABLE_TOOL_CALLING_MODEL
+  credentials: SET_IN_INTEGRATION_UI
+voice:
+  stt: UNDECIDED_TEXT_FIRST
+  tts: piper
+  language: zh
